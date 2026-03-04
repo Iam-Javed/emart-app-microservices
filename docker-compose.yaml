@@ -4,7 +4,6 @@ services:
   client:
     build:
       context: ./client
-    image: misterj25/clientimg
     ports:
       - "4200:4200"
     container_name: client
@@ -15,7 +14,6 @@ services:
   api:
     build:
       context: ./nodeapi
-    image: misterj25/nodeapiimg
     ports:
       - "5000:5000"
     restart: always
@@ -27,7 +25,6 @@ services:
   webapi:
     build:
       context: ./javaapi
-    image: misterj25/javaapiimg
     ports:
       - "9000:9000"
     restart: always
