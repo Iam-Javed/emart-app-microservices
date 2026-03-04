@@ -1,4 +1,4 @@
-# Workflow for kubekart end to end project (Docker Hub only)
+# Workflow for kubekart end to end project 
 
 name: Kubekart End to End Workflow
 
@@ -16,6 +16,7 @@ on:
   schedule:
     - cron: '0 0 * * *'
 
+# Define environment variables for image names and Helm configuration
 env:
   CLIENT_IMAGE: client
   BOOKS_IMAGE: books
@@ -27,10 +28,10 @@ env:
 
 jobs:
 
-# -------------------------------------------------------
-# BUILD
-# -------------------------------------------------------
-  Build:
+#stages
+
+#build docker images and save as artifacts
+  BUILD:
     environment: Prod1
     runs-on: ubuntu-latest
 
@@ -66,10 +67,9 @@ jobs:
             main.tar
 
 
-# -------------------------------------------------------
-# PUSH  (Docker Hub only)
-# -------------------------------------------------------
-  Push:
+# Push images to Docker Hub
+
+  PUSH:
     environment: Production
     runs-on: ubuntu-latest
     needs: Build
@@ -109,3 +109,42 @@ jobs:
           docker tag main:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/main:latest
           docker push ${{ secrets.DOCKER_USERNAME }}/main:${{ github.run_number }}
           docker push ${{ secrets.DOCKER_USERNAME }}/main:latest
+
+# deploy to kOps cluster using Helm
+  DEPLOY:
+    runs-on: ubuntu-latest
+    environment: Prod1
+    needs: Push
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.29.0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Configure kubeconfig (kOps cluster)
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Verify cluster access
+        run: kubectl get nodes
+
+      - name: Deploy using Helm (client + books + main)
+        run: |
+          helm upgrade kubekart kkartchart --install \
+            --namespace kart \
+            --create-namespace \
+            --set kkartcharts-frontend.image.client.repository=${{ secrets.DOCKER_USERNAME }}/client \
+            --set kkartcharts-frontend.image.client.tag=${{ github.run_number }} \
+            --set kkartcharts-backend.image.books.repository=${{ secrets.DOCKER_USERNAME }}/books \
+            --set kkartcharts-backend.image.books.tag=${{ github.run_number }} \
+            --set kkartcharts-backend.image.main.repository=${{ secrets.DOCKER_USERNAME }}/main \
+            --set kkartcharts-backend.image.main.tag=${{ github.run_number }}
