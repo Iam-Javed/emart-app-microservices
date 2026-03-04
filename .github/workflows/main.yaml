@@ -113,7 +113,7 @@ jobs:
 # deploy to kOps cluster using Helm
   DEPLOY:
     runs-on: ubuntu-latest
-    environment: Prod1
+    environment: Production
     needs: Push
 
     steps:
