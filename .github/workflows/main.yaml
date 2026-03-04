@@ -1,11 +1,12 @@
-# CI workflow for the demo project
+# Workflow for kubekart end to end project (Docker Hub only)
 
-name: CI workflow
+name: Kubekart End to End Workflow
 
 on:
   push:
     branches:
       - main
+
   pull_request:
     branches:
       - main
@@ -13,79 +14,100 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: '0 10 * * 1-5'
+    - cron: '0 0 * * *'
 
 env:
-  ECR_REPOSITORY: 'vprofile-appimage'
+  CLIENT_IMAGE: client
+  BOOKS_IMAGE: books
+  MAIN_IMAGE: main
 
-permissions:
-  contents: read
+  HELM_RELEASE: kubekart
+  HELM_CHART: kkartchart
+  NAMESPACE: kart
 
 jobs:
+
+# -------------------------------------------------------
+# BUILD
+# -------------------------------------------------------
   Build:
+    environment: Prod1
     runs-on: ubuntu-latest
+
     steps:
       - name: Code Checkout
         uses: actions/checkout@v4
-      - name: Maven Install
-        run: mvn install
 
-      - name: Upload build artifact (jar)
+      - name: Prepare main app config
+        run: sed -i 's/localhost/emongo/g' nodeapi/config/keys.js
+
+      - name: Build client image
+        run: docker build -t client:${{ github.run_number }} ./client
+
+      - name: Build books image
+        run: docker build -t books:${{ github.run_number }} ./javaapi
+
+      - name: Build main image
+        run: docker build -t main:${{ github.run_number }} ./nodeapi
+
+      - name: Save images
+        run: |
+          docker save client:${{ github.run_number }} -o client.tar
+          docker save books:${{ github.run_number }}  -o books.tar
+          docker save main:${{ github.run_number }}   -o main.tar
+
+      - name: Upload images as artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: emart-app
-          path: target/*.jar
+          name: kubekart-images
+          path: |
+            client.tar
+            books.tar
+            main.tar
 
-      - name: Notify If build Fails
-        if: failure()
-        run: echo "Build job failed! Please check logs for details."
-      
-      - name: Notify If build Succeeds
-        if: success()
-        run: echo "Build job succeeded! Proceeding to testing."
-  
-  Testing:
+
+# -------------------------------------------------------
+# PUSH  (Docker Hub only)
+# -------------------------------------------------------
+  Push:
+    environment: Prod1
     runs-on: ubuntu-latest
     needs: Build
+
     steps:
-      - name: Code checkout
-        uses: actions/checkout@v4
+      - name: Download image artifacts
+        uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
+          name: kubekart-images
 
-      - name: Run tests on main branch
-        if: github.ref == 'refs/heads/main'
-        run: mvn test
+      - name: Load images
+        run: |
+          docker load -i client.tar
+          docker load -i books.tar
+          docker load -i main.tar
 
-      - name: Checkstyle
-        if: github.ref == 'refs/heads/main'
-        run: mvn checkstyle:checkstyle
+      - name: Login to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login \
+            -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-      - name: Run tests on Other branches
-        if: github.ref != 'refs/heads/main'
-        run: echo "Skipping unit tests and code analysis"
-     
-  Security_Scan:
-    runs-on: ubuntu-latest
-    needs: Build
-    steps:
-      - name: Code Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Fetch all history for accurate analysis
-    
-      - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: json
-          exit-code: 0
-          vuln-type: os,library
-          output: trivy-results.json
+      - name: Tag and push client image
+        run: |
+          docker tag client:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/client:${{ github.run_number }}
+          docker tag client:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/client:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/client:${{ github.run_number }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/client:latest
 
-      - name: Upload Trivy scan results as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-scan-results
-          path: trivy-results.json
+      - name: Tag and push books image
+        run: |
+          docker tag books:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/books:${{ github.run_number }}
+          docker tag books:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/books:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/books:${{ github.run_number }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/books:latest
+
+      - name: Tag and push main image
+        run: |
+          docker tag main:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/main:${{ github.run_number }}
+          docker tag main:${{ github.run_number }} ${{ secrets.DOCKER_USERNAME }}/main:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/main:${{ github.run_number }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/main:latest
